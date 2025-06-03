@@ -92,10 +92,11 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       // Get user's liked videos
       const { data: likedVideos } = await supabase
         .from('likes')
-        .select('video_id')
-        .eq('user_id', user.id);
+        .select('content_id')
+        .eq('user_id', user.id)
+        .eq('content_type', 'video');
 
-      const likedIds = likedVideos?.map(v => v.video_id) || [];
+      const likedIds = likedVideos?.map(v => v.content_id) || [];
 
       // Get user's saved videos
       const { data: savedVideos } = await supabase
@@ -121,40 +122,20 @@ export const useVideoStore = create<VideoState>((set, get) => ({
           break;
 
         case 'foryou':
-          // Obtener TODOS los videos
-          const { data: allVideos, error: allVideosError } = await supabase
+          // Primero obtenemos los videos no vistos
+          const { data: unseenVideos, error: unseenError } = await supabase
             .from('videos')
-            .select(`
-              *,
-              likes_count,
-              comments_count,
-              views_count,
-              user_profile:profiles!user_id(
-                id, 
-                username, 
-                avatar_url, 
-                is_vip
-              ),
-              video_hashtags(
-                hashtag:hashtags(
-                  id,
-                  name
-                )
-              ),
-              challenge:challenges(
-                id,
-                name,
-                description
-              )
-            `)
-            .order('created_at', { ascending: false });
+            .select('id')
+            .not('id', 'in', viewedIds)
+            .order('likes_count', { ascending: false })
+            .order('comments_count', { ascending: false })
+            .order('views_count', { ascending: false })
+            .order('created_at', { ascending: false })
+            .limit(1);
 
-          if (allVideosError) throw allVideosError;
+          if (unseenError) throw unseenError;
 
-          // Filtrar los videos vistos
-          const unseenVideos = allVideos.filter(video => !viewedIds.includes(video.id));
-
-          if (unseenVideos.length === 0) {
+          if (!unseenVideos || unseenVideos.length === 0) {
             set({ 
               videos: [], 
               hasMore: false, 
@@ -164,33 +145,14 @@ export const useVideoStore = create<VideoState>((set, get) => ({
             return;
           }
 
-          // Ordenar por engagement
-          const sortedVideos = unseenVideos.sort((a, b) => {
-            // Primero por likes
-            if (a.likes_count !== b.likes_count) {
-              return b.likes_count - a.likes_count;
-            }
-            // Luego por comentarios
-            if (a.comments_count !== b.comments_count) {
-              return b.comments_count - a.comments_count;
-            }
-            // Luego por vistas
-            if (a.views_count !== b.views_count) {
-              return b.views_count - a.views_count;
-            }
-            // Finalmente por fecha
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          });
-
-          // Paginar los resultados
-          const paginatedVideos = sortedVideos.slice(from, to + 1);
-          
-          set({ 
-            videos: page === 0 ? paginatedVideos : [...videos, ...paginatedVideos],
-            hasMore: paginatedVideos.length === PAGE_SIZE,
-            loading: false
-          });
-          return;
+          // Si hay videos no vistos, continuamos con la consulta principal
+          query = query
+            .not('id', 'in', viewedIds)
+            .order('likes_count', { ascending: false })
+            .order('comments_count', { ascending: false })
+            .order('views_count', { ascending: false })
+            .order('created_at', { ascending: false });
+          break;
 
         case 'explore':
           // Include trending hashtags and challenges
@@ -405,48 +367,52 @@ export const useVideoStore = create<VideoState>((set, get) => ({
         .eq('content_type', 'video')
         .maybeSingle();
         
-      if (existingLike) {
-        // Remove like
-        const { error: deleteError } = await supabase
-          .from('likes')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('content_id', videoId)
-          .eq('content_type', 'video');
-
-        if (deleteError) throw deleteError;
-      } else {
+      if (!existingLike) {
         // Add like
         const { error: insertError } = await supabase
           .from('likes')
           .insert({
             user_id: user.id,
             content_id: videoId,
-            content_type: 'video'
+            content_type: 'video',
+            video_id: videoId
           });
 
-        if (insertError) throw insertError;
+        if (insertError) {
+          // If it's a unique constraint violation, the like already exists
+          if (insertError.code === '23505') {
+            console.log('Like already exists');
+            return;
+          }
+          throw insertError;
+        }
+
+        // Get updated counts
+        const { count: likesCount } = await supabase
+          .from('likes')
+          .select('*', { count: 'exact', head: true })
+          .eq('content_type', 'video')
+          .eq('content_id', videoId);
+
+        // Update video likes count
+        const { error: updateError } = await supabase
+          .from('videos')
+          .update({ 
+            likes_count: likesCount || 0
+          })
+          .eq('id', videoId);
+
+        if (updateError) throw updateError;
+
+        // Actualizar el estado local de los videos
+        set((state) => ({
+          videos: state.videos.map(video => 
+            video.id === videoId 
+              ? { ...video, likes_count: likesCount || 0 }
+              : video
+          )
+        }));
       }
-
-      // Get updated counts
-      const { count: likesCount } = await supabase
-        .from('likes')
-        .select('*', { count: 'exact', head: true })
-        .eq('content_type', 'video')
-        .eq('content_id', videoId);
-
-      // Update video likes count
-      const { error: updateError } = await supabase
-        .from('videos')
-        .update({ 
-          likes_count: likesCount || 0
-        })
-        .eq('id', videoId);
-
-      if (updateError) throw updateError;
-      
-      // Refresh videos to show updated counts
-      await get().fetchVideos(0);
     } catch (error) {
       console.error('Error liking video:', error);
       throw error;

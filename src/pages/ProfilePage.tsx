@@ -37,22 +37,30 @@ const ProfilePage: React.FC = () => {
     }
 
     try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch profile data
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', id)
         .single();
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        if (profileError.code === 'PGRST116') {
+          throw new Error('Profile not found');
+        }
+        throw profileError;
+      }
 
       if (!profileData) {
-        setError('Profile not found');
-        setLoading(false);
-        return;
+        throw new Error('Profile not found');
       }
 
       setProfile(profileData);
 
+      // Fetch user's videos
       const { data: videosData, error: videosError } = await supabase
         .from('videos')
         .select(`
@@ -66,23 +74,10 @@ const ProfilePage: React.FC = () => {
 
       // Update video counts
       const updatedVideos = await Promise.all((videosData || []).map(async (video) => {
-        // Get actual views count
         const { count: viewsCount } = await supabase
           .from('video_views')
           .select('*', { count: 'exact', head: true })
           .eq('video_id', video.id);
-
-        // Update video with new counts
-        const { error: updateError } = await supabase
-          .from('videos')
-          .update({ 
-            views_count: viewsCount || 0
-          })
-          .eq('id', video.id);
-
-        if (updateError) {
-          console.error('Error updating video counts:', updateError);
-        }
 
         return {
           ...video,
@@ -93,15 +88,15 @@ const ProfilePage: React.FC = () => {
       setVideos(updatedVideos);
 
       if (isCurrentUser) {
-        // Fetch liked video IDs first
+        // Fetch liked videos
         const { data: likedVideoIds } = await supabase
           .from('likes')
-          .select('video_id')
-          .eq('user_id', id);
+          .select('content_id')
+          .eq('user_id', id)
+          .eq('content_type', 'video');
 
-        // Filter out null values and extract video IDs
         const validLikedVideoIds = (likedVideoIds || [])
-          .map(like => like.video_id)
+          .map(like => like.content_id)
           .filter(Boolean);
 
         if (validLikedVideoIds.length > 0) {
@@ -116,25 +111,11 @@ const ProfilePage: React.FC = () => {
 
           if (likedError) throw likedError;
 
-          // Update liked videos counts
           const updatedLikedVideos = await Promise.all((likedData || []).map(async (video) => {
-            // Get actual views count
             const { count: viewsCount } = await supabase
               .from('video_views')
               .select('*', { count: 'exact', head: true })
               .eq('video_id', video.id);
-
-            // Update video with new counts
-            const { error: updateError } = await supabase
-              .from('videos')
-              .update({ 
-                views_count: viewsCount || 0
-              })
-              .eq('id', video.id);
-
-            if (updateError) {
-              console.error('Error updating video counts:', updateError);
-            }
 
             return {
               ...video,
@@ -145,13 +126,12 @@ const ProfilePage: React.FC = () => {
           setLikedVideos(updatedLikedVideos);
         }
 
-        // Fetch saved video IDs first
+        // Fetch saved videos
         const { data: savedVideoIds } = await supabase
           .from('video_saves')
           .select('video_id')
           .eq('user_id', id);
 
-        // Filter out null values and extract video IDs
         const validSavedVideoIds = (savedVideoIds || [])
           .map(save => save.video_id)
           .filter(Boolean);
@@ -168,25 +148,11 @@ const ProfilePage: React.FC = () => {
 
           if (savedError) throw savedError;
 
-          // Update saved videos counts
           const updatedSavedVideos = await Promise.all((savedData || []).map(async (video) => {
-            // Get actual views count
             const { count: viewsCount } = await supabase
               .from('video_views')
               .select('*', { count: 'exact', head: true })
               .eq('video_id', video.id);
-
-            // Update video with new counts
-            const { error: updateError } = await supabase
-              .from('videos')
-              .update({ 
-                views_count: viewsCount || 0
-              })
-              .eq('id', video.id);
-
-            if (updateError) {
-              console.error('Error updating video counts:', updateError);
-            }
 
             return {
               ...video,
@@ -197,11 +163,10 @@ const ProfilePage: React.FC = () => {
           setSavedVideos(updatedSavedVideos);
         }
       }
-
-      setError(null);
     } catch (error: any) {
       console.error('Error fetching profile:', error);
       setError(error.message || 'Failed to load profile');
+      setProfile(null);
     } finally {
       setLoading(false);
     }
@@ -213,7 +178,7 @@ const ProfilePage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="animate-spin h-12 w-12 border-t-2 border-b-2 border-blue-500 rounded-full"></div>
       </div>
     );
@@ -221,9 +186,9 @@ const ProfilePage: React.FC = () => {
 
   if (error || !profile) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 text-center">
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 text-center bg-black">
         <Grid size={64} className="text-gray-500 mb-4" />
-        <h2 className="text-xl font-bold">{error || 'Profile not found'}</h2>
+        <h2 className="text-xl font-bold text-white">{error || 'Profile not found'}</h2>
         <p className="text-gray-500 mb-6">The profile you're looking for doesn't exist or is unavailable.</p>
         <Button variant="outline" onClick={() => navigate('/')}>
           Go to Home
