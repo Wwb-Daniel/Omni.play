@@ -25,15 +25,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
   const [showOptions, setShowOptions] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isCurrentUserVideo, setIsCurrentUserVideo] = useState(false);
-  const [hasRecordedView, setHasRecordedView] = useState(false);
+  const [hasMarkedAsViewed, setHasMarkedAsViewed] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const { likeVideo, saveVideo, deleteVideo, updateVideo } = useVideoStore();
+  const { likeVideo, saveVideo, deleteVideo, updateVideo, marcarVideoVisto } = useVideoStore();
   const { followUser, unfollowUser, isFollowing: checkIsFollowing } = useUserStore();
   const navigate = useNavigate();
 
-  // Reset view recording state when video changes
+  // Reset viewed state when video changes
   useEffect(() => {
-    setHasRecordedView(false);
+    setHasMarkedAsViewed(false);
   }, [video.id]);
 
   // Check if current user is the video owner
@@ -103,12 +103,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
               setIsPlaying(true);
               setShowPlayButton(false);
               
-              if (!hasRecordedView) {
-                const { data: { user } } = await supabase.auth.getUser();
-                if (user) {
-                  await recordView();
-                  setHasRecordedView(true);
-                }
+              // Marcar video como visto después de 3 segundos de reproducción
+              if (!hasMarkedAsViewed) {
+                setTimeout(async () => {
+                  if (isPlaying && !hasMarkedAsViewed) {
+                    await marcarVideoVisto(video.id);
+                    setHasMarkedAsViewed(true);
+                  }
+                }, 3000); // 3 segundos
               }
             }
           } catch (error) {
@@ -124,34 +126,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
         setShowPlayButton(true);
       }
     }
-  }, [isActive, hasRecordedView]);
-
-  const recordView = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      // Registrar la vista en video_views
-      const { error: viewError } = await supabase
-        .from('video_views')
-        .insert({
-          video_id: video.id,
-          user_id: user.id
-        });
-
-      if (viewError) {
-        // Si es un error de duplicado, lo ignoramos (el usuario ya vio el video)
-        if (viewError.code === '23505') return;
-        console.error('Error recording view:', viewError);
-        return;
-      }
-
-      // El trigger actualizará automáticamente el contador de vistas
-      // No necesitamos actualizar manualmente el contador
-    } catch (error) {
-      console.error('Error recording view:', error);
-    }
-  };
+  }, [isActive, hasMarkedAsViewed, isPlaying, marcarVideoVisto, video.id]);
 
   const togglePlay = async () => {
     if (videoRef.current) {
@@ -164,6 +139,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
           await videoRef.current.play();
           setIsPlaying(true);
           setShowPlayButton(false);
+          
+          // Marcar como visto si no se ha marcado aún
+          if (!hasMarkedAsViewed) {
+            setTimeout(async () => {
+              if (isPlaying && !hasMarkedAsViewed) {
+                await marcarVideoVisto(video.id);
+                setHasMarkedAsViewed(true);
+              }
+            }, 3000);
+          }
         }
       } catch (error) {
         setIsPlaying(false);

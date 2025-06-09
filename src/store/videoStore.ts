@@ -23,6 +23,7 @@ interface VideoState {
   saveVideo: (videoId: string) => Promise<void>;
   setCurrentVideo: (video: Video | null) => void;
   setFeedType: (type: 'all' | 'following' | 'foryou' | 'explore') => void;
+  marcarVideoVisto: (videoId: string) => Promise<void>;
 }
 
 const PAGE_SIZE = 5;
@@ -40,8 +41,28 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   feedType: 'all',
 
   setFeedType: (type) => {
-    set({ feedType: type });
+    set({ feedType: type, videos: [], hasMore: true });
     get().fetchVideos(0);
+  },
+
+  marcarVideoVisto: async (videoId: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase
+        .from('videos_vistos')
+        .insert({
+          user_id: user.id,
+          video_id: videoId
+        });
+
+      if (error && error.code !== '23505') { // Ignorar error de duplicado
+        console.error('Error marcando video como visto:', error);
+      }
+    } catch (error) {
+      console.error('Error marcando video como visto:', error);
+    }
   },
 
   fetchVideos: async (page = 0) => {
@@ -81,31 +102,6 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Get user's viewed videos
-      const { data: viewedVideos } = await supabase
-        .from('video_views')
-        .select('video_id')
-        .eq('user_id', user.id);
-
-      const viewedIds = viewedVideos?.map(v => v.video_id) || [];
-
-      // Get user's liked videos
-      const { data: likedVideos } = await supabase
-        .from('likes')
-        .select('content_id')
-        .eq('user_id', user.id)
-        .eq('content_type', 'video');
-
-      const likedIds = likedVideos?.map(v => v.content_id) || [];
-
-      // Get user's saved videos
-      const { data: savedVideos } = await supabase
-        .from('video_saves')
-        .select('video_id')
-        .eq('user_id', user.id);
-
-      const savedIds = savedVideos?.map(v => v.video_id) || [];
-
       switch (feedType) {
         case 'following':
           const { data: followingIds } = await supabase
@@ -122,32 +118,40 @@ export const useVideoStore = create<VideoState>((set, get) => ({
           break;
 
         case 'foryou':
-          // Primero obtenemos los videos no vistos
-          const { data: unseenVideos, error: unseenError } = await supabase
+          // Obtener videos que el usuario ya ha visto
+          const { data: videosVistos } = await supabase
+            .from('videos_vistos')
+            .select('video_id')
+            .eq('user_id', user.id);
+
+          const videosVistosIds = videosVistos?.map(v => v.video_id) || [];
+
+          if (videosVistosIds.length > 0) {
+            // Excluir videos ya vistos
+            query = query.not('id', 'in', videosVistosIds);
+          }
+
+          // Verificar si hay videos no vistos
+          const { data: videosNoVistos, error: checkError } = await supabase
             .from('videos')
             .select('id')
-            .not('id', 'in', viewedIds)
-            .order('likes_count', { ascending: false })
-            .order('comments_count', { ascending: false })
-            .order('views_count', { ascending: false })
-            .order('created_at', { ascending: false })
+            .not('id', 'in', videosVistosIds)
             .limit(1);
 
-          if (unseenError) throw unseenError;
+          if (checkError) throw checkError;
 
-          if (!unseenVideos || unseenVideos.length === 0) {
+          if (!videosNoVistos || videosNoVistos.length === 0) {
             set({ 
               videos: [], 
               hasMore: false, 
               loading: false,
-              error: 'No hay más videos nuevos para ver. ¡Vuelve más tarde!'
+              error: '¡Has visto todos los videos disponibles! Vuelve más tarde para ver contenido nuevo.'
             });
             return;
           }
 
-          // Si hay videos no vistos, continuamos con la consulta principal
+          // Ordenar por engagement para mostrar los mejores videos primero
           query = query
-            .not('id', 'in', viewedIds)
             .order('likes_count', { ascending: false })
             .order('comments_count', { ascending: false })
             .order('views_count', { ascending: false })
