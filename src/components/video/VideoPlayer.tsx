@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Heart, MessageCircle, Share2, User, Volume2, VolumeX, Play, Pause, Eye, Bookmark, MoreVertical, Plus, Check, Pencil, Trash2, Download, Crown } from 'lucide-react';
+import { Heart, MessageCircle, Share2, User, Volume2, VolumeX, Play, Pause, Bookmark, MoreVertical, Plus, Check, Pencil, Trash2, Download, Crown } from 'lucide-react';
 import { useVideoStore } from '../../store/videoStore';
 import { useUserStore } from '../../store/userStore';
 import { Link, useNavigate } from 'react-router-dom';
@@ -27,6 +27,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
   const [isCurrentUserVideo, setIsCurrentUserVideo] = useState(false);
   const [hasMarkedAsViewed, setHasMarkedAsViewed] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [likesCount, setLikesCount] = useState(video.likes_count || 0);
+  const [commentsCount, setCommentsCount] = useState(video.comments_count || 0);
   const { likeVideo, saveVideo, deleteVideo, updateVideo, marcarVideoVisto } = useVideoStore();
   const { followUser, unfollowUser, isFollowing: checkIsFollowing } = useUserStore();
   const navigate = useNavigate();
@@ -34,7 +36,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
   // Reset viewed state when video changes
   useEffect(() => {
     setHasMarkedAsViewed(false);
-  }, [video.id]);
+    setLikesCount(video.likes_count || 0);
+    setCommentsCount(video.comments_count || 0);
+  }, [video.id, video.likes_count, video.comments_count]);
 
   // Check if current user is the video owner
   useEffect(() => {
@@ -190,21 +194,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
           throw error;
         }
 
-        // Actualizar el estado local inmediatamente
+        // Update local state immediately with animation
         setIsLiked(true);
-        // Incrementar el contador localmente
-        video.likes_count = (video.likes_count || 0) + 1;
-
-        // Actualizar el contador en la base de datos
-        const { error: updateError } = await supabase
-          .from('videos')
-          .update({ 
-            likes_count: video.likes_count
-          })
-          .eq('id', video.id);
-
-        if (updateError) {
-          console.error('Error updating likes count:', updateError);
+        setLikesCount(prev => prev + 1);
+        
+        // Add pulse animation
+        const heartElement = e.currentTarget.querySelector('.heart-icon');
+        if (heartElement) {
+          heartElement.classList.add('pulse-heart');
+          setTimeout(() => {
+            heartElement.classList.remove('pulse-heart');
+          }, 300);
         }
       }
     } catch (error) {
@@ -297,6 +297,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
     setShowOptions(false);
   };
 
+  const handleCommentAdded = () => {
+    setCommentsCount(prev => prev + 1);
+  };
+
   return (
     <div className="relative w-full h-full bg-black">
       <video
@@ -311,7 +315,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
       
       <motion.button
         whileTap={{ scale: 1.1 }}
-        className="absolute top-4 left-4 z-30"
+        className="absolute top-4 left-4 z-30 video-control"
         onClick={(e) => {
           e.stopPropagation();
           toggleMute();
@@ -326,20 +330,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
         className="absolute inset-0 z-20 flex items-center justify-center cursor-pointer"
         onClick={togglePlay}
       >
-        {showPlayButton && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.5 }}
-            className="bg-black bg-opacity-50 rounded-full p-4"
-          >
-            {isPlaying ? (
-              <Pause className="w-12 h-12 text-white" />
-            ) : (
-              <Play className="w-12 h-12 text-white" />
-            )}
-          </motion.div>
-        )}
+        <AnimatePresence>
+          {showPlayButton && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              className="bg-black bg-opacity-50 rounded-full p-4"
+            >
+              {isPlaying ? (
+                <Pause className="w-12 h-12 text-white" />
+              ) : (
+                <Play className="w-12 h-12 text-white" />
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* VIP badge for creator */}
@@ -354,29 +360,29 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
       <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center space-y-4">
         <motion.button
           whileTap={{ scale: 1.1 }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center video-control"
           onClick={handleLike}
         >
           <div className={`w-12 h-12 rounded-full bg-gray-800 bg-opacity-70 flex items-center justify-center ${isLiked ? 'text-red-500' : 'text-white'}`}>
-            <Heart size={24} fill={isLiked ? "currentColor" : "none"} />
+            <Heart size={24} fill={isLiked ? "currentColor" : "none"} className="heart-icon" />
           </div>
-          <span className="text-xs mt-1">{formatCount(video.likes_count)}</span>
+          <span className="text-xs mt-1">{formatCount(likesCount)}</span>
         </motion.button>
         
         <motion.button
           whileTap={{ scale: 1.1 }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center video-control"
           onClick={toggleComments}
         >
           <div className="w-12 h-12 rounded-full bg-gray-800 bg-opacity-70 flex items-center justify-center">
             <MessageCircle size={24} />
           </div>
-          <span className="text-xs mt-1">{formatCount(video.comments_count)}</span>
+          <span className="text-xs mt-1">{formatCount(commentsCount)}</span>
         </motion.button>
 
         <motion.button
           whileTap={{ scale: 1.1 }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center video-control"
           onClick={handleSave}
         >
           <div className={`w-12 h-12 rounded-full bg-gray-800 bg-opacity-70 flex items-center justify-center ${isSaved ? 'text-blue-500' : 'text-white'}`}>
@@ -388,7 +394,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
         <div className="relative">
           <motion.button
             whileTap={{ scale: 1.1 }}
-            className="flex flex-col items-center"
+            className="flex flex-col items-center video-control"
             onClick={handleOptionsClick}
           >
             <div className="w-12 h-12 rounded-full bg-gray-800 bg-opacity-70 flex items-center justify-center">
@@ -489,7 +495,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
                   <motion.button
                     whileTap={{ scale: 0.95 }}
                     onClick={handleFollow}
-                    className="ml-2 px-3 py-1 rounded-full bg-gray-800 bg-opacity-70 flex items-center space-x-1"
+                    className="ml-2 px-3 py-1 rounded-full bg-gray-800 bg-opacity-70 flex items-center space-x-1 video-control"
                   >
                     {isFollowing ? (
                       <>
@@ -513,11 +519,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
           {video.description && (
             <p className="text-xs text-gray-300 line-clamp-2">{video.description}</p>
           )}
-          
-          <div className="flex items-center mt-2 text-gray-400 text-xs">
-            <Eye size={12} className="mr-1" />
-            <span>{formatCount(video.views_count)} views</span>
-          </div>
         </div>
       </div>
 
@@ -534,10 +535,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isActive }) => {
             <CommentSection
               videoId={video.id}
               onClose={() => setShowComments(false)}
-              onCommentAdded={() => {
-                // Actualizar el contador localmente
-                video.comments_count = (video.comments_count || 0) + 1;
-              }}
+              onCommentAdded={handleCommentAdded}
             />
           </motion.div>
         )}
